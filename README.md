@@ -56,18 +56,21 @@ The `NonOverlappingRecurringTask` class provides the following getter methods to
 In many applications, MongoDB documents originate from sources such as message queues or user interactions. Instead of upserting each document individually - potentially causing excessive network load - it is common to **accumulate** them in memory before performing a periodic batch flush to the database.
 
 The **non-overlapping execution guarantee** ensures that multiple batches are never upserted concurrently, helping to keep network bandwidth usage under control. This guarantee allows users to set a relatively low interval while focusing on their business logic without worrying about overlapping operations.
+
+This example leverages the [batched-items-accumulator](https://www.npmjs.com/package/batched-items-accumulator) package to accumulate documents into fixed-size batches (number-of-documents wise). It abstracts batch management, allowing users to focus on application logic:
 ```ts
 import {
   NonOverlappingRecurringTask,
   INonOverlappingRecurringTaskOptions
 } from 'non-overlapping-recurring-task';
+import { BatchedAccumulator } from 'batched-items-accumulator';
 import { Collection } from 'mongodb';
-import { BatchAccumulator } from './batch-accumulator';
 
 const FLUSH_INTERVAL_MS = 5000;
+const BATCH_SIZE = 512;
 
 class PeriodicDocumentFlusher<DocumentType> {
-  private readonly _documentsAccumulator = new BatchAccumulator<DocumentType>();
+  private readonly _documentsAccumulator = new BatchedAccumulator<DocumentType>(BATCH_SIZE);
   private readonly _recurringFlush: NonOverlappingRecurringTask<MongoError>;
 
   /**
@@ -90,8 +93,8 @@ class PeriodicDocumentFlusher<DocumentType> {
     );
   }
 
-  public start(): Promise<boolean> {
-    return this._recurringFlush.start();
+  public async start(): Promise<void> {
+    await this._recurringFlush.start();
   }
   
   public async stop(): Promise<void> {
@@ -101,7 +104,7 @@ class PeriodicDocumentFlusher<DocumentType> {
 
   public add(doc: DocumentType): void {
     // Accumulate documents in memory for batch processing.
-    this._documentsAccumulator.addItem(doc);
+    this._documentsAccumulator.accumulateItem(doc);
   }
 
   private async _bulkUpsert(batch: DocumentType[]): Promise<void> {
@@ -117,7 +120,7 @@ class PeriodicDocumentFlusher<DocumentType> {
    * For brevity, this example focuses solely on the upsert process.
    */
   private async _flushAccumulatedBatches(): Promise<void> {
-    const batches: DocumentType[][] = this._documentsAccumulator.extractBatches();
+    const batches: DocumentType[][] = this._documentsAccumulator.extractAccumulatedBatches();
     for (const batch of batches) {
       await this._bulkUpsert(batch);
     }
