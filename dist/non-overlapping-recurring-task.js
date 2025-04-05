@@ -188,7 +188,8 @@ class NonOverlappingRecurringTask {
      * ### Graceful Teardown
      * If this method is invoked during an ongoing execution, it resolves only after the
      * current execution completes. This guarantee ensures **determinism** and allows for
-     * a **graceful teardown**.
+     * a **graceful teardown**. If the `shouldExecuteFinalRun` flag is enabled, the method
+     * also waits for the final (digest) run to complete.
      * Use cases where it is essential to complete any ongoing execution before proceeding include:
      * - **Application Shutdowns**: In cases like `onModuleDestroy` in NestJS applications, where
      *   tasks should complete before termination. For instance, ensuring a bulk-write to a database
@@ -202,19 +203,42 @@ class NonOverlappingRecurringTask {
      * In case the instance is in a termination status (i.e., awaiting completion of the last execution),
      * a redundant call will wait for the ongoing execution to complete before resolving.
      *
+     * ### Optional: Force an Additional Final Run
+     * Enabling the `shouldExecuteFinalRun` flag triggers **one final execution** before resolving.
+     * This is particularly useful for tasks that accumulate state between executions and require
+     * a final flush (write operation) to **ensure no unprocessed data remains**.
+     * #### When This is Relevant
+     * - Flushing Batched Writes: A log aggregator that periodically writes accumulated logs to a
+     *   database should execute a final flush before stopping to prevent data loss.
+     * - Committing Transactions: A system that batches updates should perform one last batch
+     *   before stopping to ensure all changes are committed.
+     * #### When This is Less Relevant
+     * - Periodic Data Fetches: If the task refreshes external configurations at regular intervals,
+     *   such as feature flags, an additional fetch before stopping provides no meaningful benefit.
+     *
+     * @param shouldExecuteFinalRun - If `true`, ensures that one final execution occurs as part of the
+     *                                stop process. This is particularly useful for tasks that **accumulate
+     *                                state between executions** and require a final flush to avoid leaving
+     *                                unprocessed data. To eliminate any ambiguity, when this flag is enabled,
+     *                                the `stop` method resolves only **after** the final execution completes.
      * @returns `true` if recurring executions were stopped by this invocation (i.e., the instance's
-     *          status changed from active to inactive);
+     *          status changed from 'active' to 'inactive');
      *          `false` if the instance was already inactive or in termination status, and the
-     *          invocation had no effect.
+     *          invocation had no effect. Note that even when `false` is returned, the call
+     *          still waits for the last run to complete if invoked while the instance is in a
+     *          'terminating' status.
      */
-    async stop() {
+    async stop(shouldExecuteFinalRun) {
         if (this._status === 'inactive') {
             return false;
         }
         if (this._status === 'terminating') {
             // A concurrent stop attempt was made. Wait for the ongoing execution
-            // to complete, but indicate that this call did *not* initiate the stop phase.
-            await this.waitUntilCurrentExecutionCompletes();
+            // to complete (and an additional final run if `shouldExecuteFinalRun`
+            // is enabled), but indicate that this call did *not* initiate the stop phase.
+            while (this._currentExecutionPromise) {
+                await this._currentExecutionPromise;
+            }
             return false;
         }
         // Toggle from active to terminating.
@@ -222,7 +246,15 @@ class NonOverlappingRecurringTask {
         clearInterval(this._timerHandle);
         this._timerHandle = undefined;
         // The last execution may still be ongoing.
-        await this.waitUntilCurrentExecutionCompletes();
+        if (this._currentExecutionPromise) {
+            await this._currentExecutionPromise;
+        }
+        // Executing a final digest run to ensure no unprocessed data remains
+        // when state is accumulated between executions and requires flushing.
+        if (shouldExecuteFinalRun === true) {
+            this._currentExecutionPromise = this._executeTaskAndUpdateState();
+            await this._currentExecutionPromise;
+        }
         this._status = 'inactive';
         return true;
     }

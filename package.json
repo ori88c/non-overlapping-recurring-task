@@ -1,6 +1,6 @@
 {
   "name": "non-overlapping-recurring-task",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "A modern `setInterval` substitute tailored for asynchronous tasks, ensuring non-overlapping executions by skipping attempts if a previous execution is still in progress. Features execution status getters, graceful teardown, and a fixed delay between runs. The ability to gracefully await the completion of an ongoing execution makes it ideal for production apps demanding smooth resource cleanup.",
   "repository": {
     "type": "git",

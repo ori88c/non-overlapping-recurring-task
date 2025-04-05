@@ -189,7 +189,7 @@ async function skippedExecutionsTest(taskSucceeds) {
     expect(completedExecutions).toBe(totalExecutionsCount);
     validateErrorHandlerSpy();
 }
-async function stopShouldAwaitOngoingExecution() {
+async function stopShouldAwaitOngoingExecutionTest() {
     // Arrange.
     const options = {
         intervalMs: MOCK_INTERVAL_BETWEEN_CONSECUTIVE_STARTS_MS,
@@ -272,7 +272,7 @@ async function startShouldWaitForPreviousExecutionTest() {
     expect(completedExecutions).toBe(2);
     expect(recurringTask.status).toBe('inactive');
 }
-async function startShouldNotAlterStateWhenActive() {
+async function startShouldNotAlterStateWhenActiveTest() {
     // Arrange.
     const options = {
         intervalMs: MOCK_INTERVAL_BETWEEN_CONSECUTIVE_STARTS_MS,
@@ -302,7 +302,7 @@ async function startShouldNotAlterStateWhenActive() {
     expect(recurringTask.status).toBe('inactive');
     expect(recurringTask.isCurrentlyExecuting).toBe(false);
 }
-async function stopShouldNotAlterStateWhenInactive() {
+async function stopShouldNotAlterStateWhenInactiveTest() {
     // Arrange.
     const options = {
         intervalMs: MOCK_INTERVAL_BETWEEN_CONSECUTIVE_STARTS_MS,
@@ -325,6 +325,55 @@ async function stopShouldNotAlterStateWhenInactive() {
         expect(recurringTask.isCurrentlyExecuting).toBe(false);
     }
 }
+async function shouldExecuteFinalRunTest(shouldStopDuringExecution) {
+    // Arrange.
+    const options = {
+        intervalMs: MOCK_INTERVAL_BETWEEN_CONSECUTIVE_STARTS_MS,
+        immediateFirstRun: true,
+    };
+    const taskDurationMs = Math.floor(MOCK_INTERVAL_BETWEEN_CONSECUTIVE_STARTS_MS / 3);
+    let completedExecutions = 0;
+    const task = jest.fn().mockImplementation(async () => {
+        await sleep(taskDurationMs);
+        ++completedExecutions;
+    });
+    const recurringTask = new non_overlapping_recurring_task_1.NonOverlappingRecurringTask(task, options);
+    const pollIntervalMs = 200; // Periodically check status, simulating real-time passage.
+    // Act & Assert intermediate states.
+    await recurringTask.start();
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(completedExecutions).toBe(0);
+    if (shouldStopDuringExecution) {
+        const partialExecutionTimeMs = taskDurationMs - pollIntervalMs;
+        await jest.advanceTimersByTimeAsync(partialExecutionTimeMs);
+        expect(completedExecutions).toBe(0);
+    }
+    else {
+        const postExecutionDelayMs = taskDurationMs + pollIntervalMs;
+        await jest.advanceTimersByTimeAsync(postExecutionDelayMs);
+        expect(completedExecutions).toBe(1);
+    }
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(recurringTask.status).toBe('active');
+    const shouldExecuteFinalRun = true;
+    const stopPromise = recurringTask.stop(shouldExecuteFinalRun);
+    if (shouldStopDuringExecution) {
+        // Let current run finish.
+        await jest.advanceTimersByTimeAsync(pollIntervalMs);
+        expect(completedExecutions).toBe(1);
+    }
+    let remainingFinalExecutionTimeMs = taskDurationMs;
+    while (remainingFinalExecutionTimeMs > 0) {
+        expect(task).toHaveBeenCalledTimes(2);
+        expect(completedExecutions).toBe(1);
+        expect(recurringTask.status).toBe('terminating');
+        await Promise.race([jest.advanceTimersByTimeAsync(pollIntervalMs), stopPromise]);
+        remainingFinalExecutionTimeMs -= pollIntervalMs;
+    }
+    expect(task).toHaveBeenCalledTimes(2);
+    expect(completedExecutions).toBe(2);
+    expect(recurringTask.status).toBe('inactive');
+}
 describe('NonOverlappingRecurringTask tests', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -343,10 +392,24 @@ describe('NonOverlappingRecurringTask tests', () => {
             await skippedExecutionsTest(taskSucceeds);
         });
         test('stop should await ongoing execution completion before resolving', async () => {
-            await stopShouldAwaitOngoingExecution();
+            await stopShouldAwaitOngoingExecutionTest();
         });
-        test('start method should wait for ongoing execution to complete if called during terminating status', async () => {
+        // prettier-ignore
+        test('start method should wait for ongoing execution to complete ' +
+            'if called during terminating status', async () => {
             await startShouldWaitForPreviousExecutionTest();
+        });
+        // prettier-ignore
+        test('shouldExecuteFinalRun flag enabled: executes final run when stop() is called ' +
+            'during an ongoing execution', async () => {
+            const shouldStopDuringExecution = true;
+            await shouldExecuteFinalRunTest(shouldStopDuringExecution);
+        });
+        // prettier-ignore
+        test('shouldExecuteFinalRun flag enables: executes final run when stop() is called ' +
+            'between executions', async () => {
+            const shouldStopDuringExecution = false;
+            await shouldExecuteFinalRunTest(shouldStopDuringExecution);
         });
     });
     describe('Negative path tests', () => {
@@ -363,10 +426,10 @@ describe('NonOverlappingRecurringTask tests', () => {
             await skippedExecutionsTest(taskSucceeds);
         });
         test('start method should not alter state if instance is already active', async () => {
-            await startShouldNotAlterStateWhenActive();
+            await startShouldNotAlterStateWhenActiveTest();
         });
         test('stop method should not alter state if instance is already inactive', async () => {
-            await stopShouldNotAlterStateWhenInactive();
+            await stopShouldNotAlterStateWhenInactiveTest();
         });
         test('should throw an error when intervalMs is not a natural number', async () => {
             const nonNaturalNumbers = [-14847, -5.0001, -4, -0.02, 0, 0.48, 4.3, 45.001, 600.7];
