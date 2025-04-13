@@ -214,6 +214,7 @@ export declare class NonOverlappingRecurringTask<UncaughtErrorType = Error> {
      *                                state between executions** and require a final flush to avoid leaving
      *                                unprocessed data. To eliminate any ambiguity, when this flag is enabled,
      *                                the `stop` method resolves only **after** the final execution completes.
+     *                                Defaults to `false`.
      * @returns `true` if recurring executions were stopped by this invocation (i.e., the instance's
      *          status changed from 'active' to 'inactive');
      *          `false` if the instance was already inactive or in termination status, and the

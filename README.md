@@ -23,7 +23,7 @@ Special emphasis is given to **graceful teardown**: The ability to await the com
 * __Graceful and Deterministic Teardown :hourglass_flowing_sand:__: When the `stop` method is invoked during task execution, it resolves only **after** the execution is complete. This guarantees **smooth resource cleanup**, making it well-suited for production environments (e.g., `onModuleDestroy` in NestJS) and maintaining a **clean state** between unit tests.
 * __Fixed Delay Between Executions :repeat:__: Functions similarly to JavaScript's built-in `setInterval`, but skips executions if a previous one is still in progress.
 - __Flexible First Execution Policy :level_slider:__: The `immediateFirstRun` option lets you control whether execution begins immediately upon `start` or only after the first interval. Particularly useful when the task is part of an **application’s bootstrap phase** (e.g., `onModuleInit` in NestJS). If the bootstrap phase requires the first execution to complete before proceeding (e.g., before accepting HTTP requests), pair this with `waitUntilCurrentExecutionCompletes`.
-- __Optional Final Digest Run :broom:__: The optional `shouldExecuteFinalRun` flag allows a final execution to be performed as part of the `stop` process. This is especially useful for tasks that accumulate state between executions and need a final flush to persistent storage to avoid leaving unprocessed data. Examples include delayed publishing of batched Kafka messages and upserting accumulated data into a database.
+- __Optional Final Digest Run :broom:__: The optional `shouldExecuteFinalRun` flag allows a final execution to be performed as part of the `stop` process. This is especially useful for tasks that accumulate state between executions and need a final flush to persistent storage to avoid leaving unprocessed data. Examples include delayed publishing of batched Kafka messages and upserting accumulated data into a database. Defaults to `false`.
 - __Error Handling :warning:__: If a periodic task throws an error, it is passed to an optional error handler callback, if provided. This component does **not** perform any logging, as it is designed to be **agnostic of user preferences**, such as specific loggers or logging styles. A typical `_onTaskError` implementation logs errors based on the user's logging strategy. If the periodic task already handles its own errors, this handler can be omitted.
 - __Execution State Metrics :bar_chart:__: The `status` and `isCurrentlyExecuting` getters offer real-time insights into the scheduler's state, helping users make informed decisions, such as awaiting `waitUntilCurrentExecutionCompletes` when specific operations must not overlap the recurring task.
 - __Comprehensive documentation :books:__: Fully documented, enabling IDEs to provide intelligent **tooltips** for an enhanced development experience.
@@ -37,7 +37,7 @@ Special emphasis is given to **graceful teardown**: The ability to await the com
 The `NonOverlappingRecurringTask` class provides the following methods:
 
 * __start__: Initiates the scheduling of recurring tasks. This method is **idempotent**: calling it multiple times while the instance is already active will not alter its state or trigger additional scheduling. It only activates the task if the instance is not already active.
-* __stop__: Stops the scheduling of recurring tasks. If this method is invoked during an ongoing execution, it resolves **only after** the current execution completes. This guarantee ensures determinism and allows for a graceful teardown.
+* __stop__: Stops the scheduling of recurring tasks. If this method is invoked during an ongoing execution, it resolves **only after** the current execution completes. This guarantee ensures determinism and allows for a graceful teardown. The optional `shouldExecuteFinalRun` flag allows a final execution to be performed as part of the `stop` process.
 * __waitUntilCurrentExecutionCompletes__: Resolves when the current execution completes, whether it resolves or rejects, if called during an ongoing execution. If no execution is in progress, it resolves immediately. This method **never throws**, even if a currently ongoing execution encounters an error.
 
 If needed, refer to the code documentation for a more comprehensive description of each method.
@@ -99,8 +99,10 @@ class PeriodicDocumentFlusher<DocumentType> {
   }
   
   public async stop(): Promise<void> {
-    await this._recurringFlush.stop();
-    await this._flushAccumulatedBatches();
+    // A final execution ensures that accumulated documents are flushed
+    // to persistent storage, avoiding inconsistencies with the database.
+    const shouldExecuteFinalRun = true;
+    await this._recurringFlush.stop(shouldExecuteFinalRun);
   }
 
   public add(doc: DocumentType): void {
